@@ -1,0 +1,1472 @@
+---
+title: "Review_Ovarian-scRNAseq-analysis"
+output: pdf_document 
+---
+Reviewing the code provided by Dr.Ferrall-Fairbanks
+
+# Initial steps, importing libraries
+```{r}
+library(future) #simple and uniform way of evaluating R expressions
+library(ggplot2) #plotting library 
+library(bigmemory)#manipulation of big objects
+library(Seurat) #seurat library 
+sessionInfo() #collect information about the current R session 
+```
+
+```{r}
+plan("multiprocess", workers=8) #multicore evaluation, multisession evaluation 
+#workers=8 number of parallel futures that can be active at the same time before blocking 
+```
+## set working directory to pull files
+```{r}
+setwd("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/")
+```
+
+# STEP 1: Load all the data & Quality Control
+Ovarian Cancer Samples:
+OVCAR4 S/R
+OVCA3 S/R
+
+```{r}
+#######DONT RUN THIS, I don't have the raw data, I already have rds files, this step was already done 
+#Name the dataset OVCAR4.S.data, use the function Read10x (10x genomics) and data.dir to read the data from where it come from 
+#OVCAR4.S.data <- Read10X(data.dir = "./Gillies-OVCAR4-Ctrl-All-Count/outs/filtered_feature_bc_matrix/") 
+#OVCAR4.S <- CreateSeuratObject(counts = OVCAR4.S.data, project = "OVCAR4_S")
+#OVCAR4.S <- RenameCells(object=OVCAR4.S, add.cell.id="OVCAR4_S")
+#dim(OVCAR4.S)
+#saveRDS(OVCAR4.S, file = "/share/lab_altrock/MeghanCluster/scRNAseq/Ovarian-Mehdi/analysis/OVCAR4_S_UnprocessedCohort_SeuratObj_20191023.rds")
+```
+## Load RDS files 
+```{r}
+OVCAR4.S <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_S_UnprocessedCohort_SeuratObj_20191023.rds")
+OVCAR4.R <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_R_UnprocessedCohort_SeuratObj_20191023.rds")
+OVCA3.S <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_S_UnprocessedCohort_SeuratObj_20191023.rds")
+OVCA3.R <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_R_UnprocessedCohort_SeuratObj_20191028.rds")
+```
+## Pair S and R data 
+```{r}
+#OVCAR4
+## merge() function, x is the first column and y is the second column, label the columns with add.cell.id  , merge.data defines the way we put the data together (TRUE just puts all x and y columns next to the other)
+OVCAR4 <- merge(x=OVCAR4.S, y=OVCAR4.R, add.cell.id1 = "OVCAR4_S", add.cell.id2 = "OVCAR4_R", merge.data=TRUE, project = "OVCAR4_Pair")
+dim(OVCAR4)
+# 33538 2888 rows then columns. Features across samples 
+saveRDS(OVCAR4, file = "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_S+R_UnprocessedCohort_SeuratObj_20191023.rds") #save as an RDS file\
+
+#OVCA3
+OVCA3 <- merge(x=OVCA3.S, y=OVCA3.R, add.cell.id1 = "OVCA3_S", add.cell.id2 = "OVCA3_R", merge.data=TRUE, project = "OVCA3_Pair")
+dim(OVCA3)
+# 33538  2348
+saveRDS(OVCA3, file = "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_S+R_UnprocessedCohort_SeuratObj_20191028.rds")
+```
+## FULL MERGE - WHEN ALL INDIVIDUALS & PAIRS ARE ESTABLISHED
+Do I have to do this step???
+
+```{r}
+OvarianSet <- merge(x=OVCAR4, y=OVCA3, merge.data=TRUE, project = "OvarianCohort")
+dim(OvarianSet)
+# 33538 5236
+saveRDS(OvarianSet, file = "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Full-Ovarian-2Cell-Line-Cohort_UnprocessedCohort_SeuratObj_20191028.rds")
+```
+
+# STEP 2: Quality control 
+Working logic:
+  Need to create the raw???? for all the different cell lines. Create different rds files for each cell line and S/R pair 
+  Then combine all of them 
+  Apply cutoffs??? uniformly across entire dataset and pairs of S/R 
+
+Check out this link: https://satijalab.org/seurat/archive/v3.1/pbmc3k_tutorial.html
+Start doing every step for each of the cell lines 
+
+## OVCAR4 
+We want to create three plots and look at 3 things (in this case) called the QC metrics
+These metrices are the number of unique genes detected in each cell (features), the total number of molecules detected within a cell (counts, strongly correlated with unique genes) and the percentage of reads that map to the mitochondrial genome (percent.mito) 
+```{r}
+# Set wd to where I want to save the analysis 
+setwd("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022")
+
+#grep function searches fro matches to argument patterns within each element of a character vector 
+#pattern chosen is anything that contains ^MT-
+#Inside the OVCAR4, go to assays, then RNA, counts, Dimnames [1] is where the genes are, we want to find mito genes WHY??????
+mito.genes <- grep(pattern = "^MT-", OVCAR4@assays$RNA@counts@Dimnames[[1]], value = TRUE) 
+
+#Calculate the percentage of mito genes. Get the sum of the columns of a matrix. 
+#GetAssayData is for Seurat objects to pull information from any of the expression matrices.In this case we want the counts bc it contains the full dimensions of the matrix where the genes are. Calculates how much of each gene there is 
+percent.mito <- Matrix::colSums(x=GetAssayData(object=OVCAR4, slot='counts')[mito.genes, ])/Matrix::colSums(x=GetAssayData(object=OVCAR4, slot='counts'))
+
+#Add a column to meta.data 
+OVCAR4[['percent.mito']] <- percent.mito
+
+#Create a plot and save it as a pdf for the nFeature_RNA 
+pdf("./OVCAR4_S+R_ViolinPlot_nFeatures_2019-10-28.pdf")
+vPlot <- VlnPlot(object = OVCAR4, features = c("nFeature_RNA"))
+print(vPlot)
+dev.off() 
+## The RNA features, different genes are in mainly one area but a little scattered. No difference between R and S 
+### Filter cells that have unique counts over 2,500 (the upper limit calculate a cutoff for each case, average +- 2 standar deviations) or less than 200 
+
+#Create a plot and save it as a pdf for the percent.mito activity 
+pdf("./OVCAR4_S+R_ViolinPlot_perMito_2019-10-28.pdf")
+vPlot <- VlnPlot(object = OVCAR4, features = c("percent.mito"))
+print(vPlot)
+dev.off() 
+## The percent mito localized in one location. No significant difference between R and S 
+### Filter cells that have >5% mitochondrial counts 
+
+#View all the plots at the same time 
+pdf("./OVCAR4_S+R_ViolinPlot_ALL_2019-10-28.pdf")
+vPlotALL <- VlnPlot(OVCAR4, features = c("nFeature_RNA", "nCount_RNA", "percent.mito"), ncol=3)
+print(vPlotALL)
+dev.off()
+
+
+#Create scatter plots to show a trend between two features 
+#Create a plot for the RNA counts and the mito percentage
+pdf("./OVCAR4_S+R_ScatterPlot_RNAcount-vs-mito_2019-10-28.pdf")
+fsPlot <- FeatureScatter(object=OVCAR4, feature1 = "nCount_RNA", feature2 = "percent.mito")
+print(fsPlot)
+dev.off()
+## Points localized in a singular area, not a particular trend 
+
+#Create a plot for the number of genes (count) vs the amount of RNA 
+pdf("./OVCAR4_S+R_ScatterPlot_nGenes-vs-nRNA_2019-10-28.pdf")
+fsPlot <- FeatureScatter(object=OVCAR4, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+print(fsPlot)
+dev.off()
+## Curve up more Count more feature RNA, as counts get larger, features also get larger. The higher #of different genes the more cells   
+
+
+## Descriptive stats:
+summary(OVCAR4@meta.data$nFeature_RNA) 
+# Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#    67    3545    4027    3900    4576    7336 
+
+#Set up an upper and lower limit, na.rm=TRUE because the features column has some missing values 
+## Upper limit is the mean of the feature values + 2 sd 
+nFeatUpper <- mean(OVCAR4@meta.data$nFeature_RNA, na.rm=TRUE) + 2*sd(OVCAR4@meta.data$nFeature_RNA, na.rm=TRUE) ##  6208.011
+nFeatLower <- 200 
+
+summary(OVCAR4@meta.data$percent.mito)
+# Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+# 0.00000 0.04116 0.05055 0.05370 0.05954 0.93581
+### assumption: cancer cells may have higher metabolic rate
+##Set an upper limit with the mean and 2 sd, not use the 5%, we need to cut off a higher percentage anyways because cancer cells have a high metabolic rate 
+perMitoUpper <- mean(OVCAR4@meta.data$percent.mito, na.rm=TRUE) + 2*sd(OVCAR4@meta.data$percent.mito, na.rm=TRUE) ## [1] 0.1471598
+
+setwd("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022")
+#Create more Vlnplots now adding lines for the limits established 
+pdf("./OVCAR4_S+R_ViolinPlot_perMito_wCutoffs_2019-10-28.pdf")
+vPlot <- VlnPlot(object=OVCAR4, features = c("percent.mito"))+geom_hline(yintercept=perMitoUpper, linetype="dashed", color="red", size=1)
+print(vPlot)
+dev.off()
+
+pdf("./OVCAR4_S+R_ViolinPlot_nFeatures_wCutoffs_2019-10-28.pdf")
+vPlot <- VlnPlot(object=OVCAR4, features = c("nFeature_RNA"))+geom_hline(yintercept=nFeatUpper, linetype="dashed", color="red", size=1)+geom_hline(yintercept=nFeatLower, linetype="dashed", color="red", size=1)
+print(vPlot)
+dev.off()
+
+
+#Divide the data based on the limits established
+## subset the paired dataset
+OVCAR4 <- subset(x=OVCAR4, subset=nFeature_RNA > nFeatLower & nFeature_RNA < nFeatUpper & percent.mito < perMitoUpper)
+
+dim(OVCAR4)
+# [1] 33538  2827
+saveRDS(OVCAR4, file = "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_S+R_QC-Subset-Cohort_SeuratObj_20191028.rds")
+```
+
+## OVCA3
+Do the same analysis as above for OVCA3 cell line 
+```{r}
+# Set wd to where I want to save the analysis 
+setwd("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022")
+
+#grep function searches fro matches to argument patterns within each element of a character vector 
+#pattern chosen is anything that contains ^MT-
+#Inside the OVCAR4, go to assays, then RNA, counts, Dimnames [1] is where the genes are, we want to find mito genes WHY??????
+mito.genes <- grep(pattern = "^MT-", OVCA3@assays$RNA@counts@Dimnames[[1]], value = TRUE) 
+
+#Calculate the percentage of mito genes. Get the sum of the columns of a matrix. 
+#GetAssayData is for Seurat objects to pull information from any of the expression matrices.In this case we want the counts bc it contains the full dimensions of the matrix where the genes are. Calculates how much of each gene there is 
+percent.mito <- Matrix::colSums(x=GetAssayData(object=OVCA3, slot='counts')[mito.genes, ])/Matrix::colSums(x=GetAssayData(object=OVCA3, slot='counts'))
+
+#Add a column to meta.data 
+OVCA3[['percent.mito']] <- percent.mito
+
+#Create a plot and save it as a pdf for the nFeature_RNA 
+pdf("./OVCA3_S+R_ViolinPlot_nFeatures_2019-10-28.pdf")
+vPlot <- VlnPlot(object = OVCA3, features = c("nFeature_RNA"))
+print(vPlot)
+dev.off() 
+## The RNA features, different genes are in mainly one area but a little scattered. No difference between R and S 
+### Filter cells that have unique counts over 2,500 (the upper limit calculate a cutoff for each case, average +- 2 standar deviations) or less than 200 
+
+#Create a plot and save it as a pdf for the percent.mito activity 
+pdf("./OVCA3_S+R_ViolinPlot_perMito_2019-10-28.pdf")
+vPlot <- VlnPlot(object = OVCA3, features = c("percent.mito"))
+print(vPlot)
+dev.off() 
+## The percent mito localized in one location. No significant difference between R and S 
+### Filter cells that have >5% mitochondrial counts 
+
+#View all the plots at the same time 
+pdf("./OVCA3_S+R_ViolinPlot_ALL_2019-10-28.pdf")
+vPlotALL <- VlnPlot(OVCA3, features = c("nFeature_RNA", "nCount_RNA", "percent.mito"), ncol=3)
+print(vPlotALL)
+dev.off()
+
+
+#Create scatter plots to show a trend between two features 
+#Create a plot for the RNA counts and the mito percentage
+pdf("./OVCA3_S+R_ScatterPlot_RNAcount-vs-mito_2019-10-28.pdf")
+fsPlot <- FeatureScatter(object=OVCA3, feature1 = "nCount_RNA", feature2 = "percent.mito")
+print(fsPlot)
+dev.off()
+## Points localized in a singular area, not a particular trend 
+
+#Create a plot for the number of genes (count) vs the amount of RNA 
+pdf("./OVCA3_S+R_ScatterPlot_nGenes-vs-nRNA_2019-10-28.pdf")
+fsPlot <- FeatureScatter(object=OVCA3, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+print(fsPlot)
+dev.off()
+## Curve up more Count more feature RNA, as counts get larger, features also get larger. The higher #of different genes the more cells   
+
+
+## Descriptive stats:
+summary(OVCA3@meta.data$nFeature_RNA) 
+# Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#    67    3545    4027    3900    4576    7336 
+
+#Set up an upper and lower limit, na.rm=TRUE because the features column has some missing values 
+## Upper limit is the mean of the feature values + 2 sd 
+nFeatUpper <- mean(OVCA3@meta.data$nFeature_RNA, na.rm=TRUE) + 2*sd(OVCA3@meta.data$nFeature_RNA, na.rm=TRUE) ##  6872.9369
+nFeatLower <- 200 
+
+summary(OVCA3@meta.data$percent.mito)
+# Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+# 0.00000 0.04116 0.05055 0.05370 0.05954 0.93581
+### assumption: cancer cells may have higher metabolic rate
+##Set an upper limit with the mean and 2 sd, not use the 5%, we need to cut off a higher percentage anyways because cancer cells have a high metabolic rate 
+perMitoUpper <- mean(OVCA3@meta.data$percent.mito, na.rm=TRUE) + 2*sd(OVCA3@meta.data$percent.mito, na.rm=TRUE) ## [1] 0.2198168
+##
+
+setwd("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022")
+#Create more Vlnplots now adding lines for the limits established 
+pdf("./OVCA3_S+R_ViolinPlot_perMito_wCutoffs_2019-10-28.pdf")
+vPlot <- VlnPlot(object=OVCA3, features = c("percent.mito"))+geom_hline(yintercept=perMitoUpper, linetype="dashed", color="red", size=1)
+print(vPlot)
+dev.off()
+
+pdf("./OVCA3_S+R_ViolinPlot_nFeatures_wCutoffs_2019-10-28.pdf")
+vPlot <- VlnPlot(object=OVCA3, features = c("nFeature_RNA"))+geom_hline(yintercept=nFeatUpper, linetype="dashed", color="red", size=1)+geom_hline(yintercept=nFeatLower, linetype="dashed", color="red", size=1)
+print(vPlot)
+dev.off()
+
+
+#Divide the data based on the limits established
+## subset the paired dataset
+OVCA3 <- subset(x=OVCA3, subset=nFeature_RNA > nFeatLower & nFeature_RNA < nFeatUpper & percent.mito < perMitoUpper)
+
+dim(OVCA3)
+# [1] 33538  2827
+saveRDS(OVCA3, file = "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_S+R_QC-Subset-Cohort_SeuratObj_20191028.rds")
+```
+
+
+## OvarianSet
+Do the same analysis as above for OVCA3 cell line 
+```{r}
+# Set wd to where I want to save the analysis 
+setwd("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022")
+
+#grep function searches fro matches to argument patterns within each element of a character vector 
+#pattern chosen is anything that contains ^MT-
+#Inside the OVCAR4, go to assays, then RNA, counts, Dimnames [1] is where the genes are, we want to find mito genes WHY??????
+mito.genes <- grep(pattern = "^MT-", OvarianSet@assays$RNA@counts@Dimnames[[1]], value = TRUE) 
+
+#Calculate the percentage of mito genes. Get the sum of the columns of a matrix. 
+#GetAssayData is for Seurat objects to pull information from any of the expression matrices.In this case we want the counts bc it contains the full dimensions of the matrix where the genes are. Calculates how much of each gene there is 
+percent.mito <- Matrix::colSums(x=GetAssayData(object=OvarianSet, slot='counts')[mito.genes, ])/Matrix::colSums(x=GetAssayData(object=OvarianSet, slot='counts'))
+
+#Add a column to meta.data 
+OvarianSet[['percent.mito']] <- percent.mito
+
+#Create a plot and save it as a pdf for the nFeature_RNA 
+pdf("./OvarianSet_S+R_ViolinPlot_nFeatures_2019-10-28.pdf")
+vPlot <- VlnPlot(object = OvarianSet, features = c("nFeature_RNA"))
+print(vPlot)
+dev.off() 
+## The RNA features, different genes are in mainly one area but a little scattered. No difference between R and S 
+### Filter cells that have unique counts over 2,500 (the upper limit calculate a cutoff for each case, average +- 2 standar deviations) or less than 200 
+
+#Create a plot and save it as a pdf for the percent.mito activity 
+pdf("./OvarianSet_S+R_ViolinPlot_perMito_2019-10-28.pdf")
+vPlot <- VlnPlot(object = OvarianSet, features = c("percent.mito"))
+print(vPlot)
+dev.off() 
+## The percent mito localized in one location. No significant difference between R and S 
+### Filter cells that have >5% mitochondrial counts 
+
+#View all the plots at the same time 
+pdf("./OvarianSet_S+R_ViolinPlot_ALL_2019-10-28.pdf")
+vPlotALL <- VlnPlot(OvarianSet, features = c("nFeature_RNA", "nCount_RNA", "percent.mito"), ncol=3)
+print(vPlotALL)
+dev.off()
+
+
+#Create scatter plots to show a trend between two features 
+#Create a plot for the RNA counts and the mito percentage
+pdf("./OvarianSet_S+R_ScatterPlot_RNAcount-vs-mito_2019-10-28.pdf")
+fsPlot <- FeatureScatter(object=OvarianSet, feature1 = "nCount_RNA", feature2 = "percent.mito")
+print(fsPlot)
+dev.off()
+## Points localized in a singular area, not a particular trend 
+
+#Create a plot for the number of genes (count) vs the amount of RNA 
+pdf("./OvarianSet_S+R_ScatterPlot_nGenes-vs-nRNA_2019-10-28.pdf")
+fsPlot <- FeatureScatter(object=OvarianSet, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+print(fsPlot)
+dev.off()
+## Curve up more Count more feature RNA, as counts get larger, features also get larger. The higher #of different genes the more cells   
+
+
+## Descriptive stats:
+summary(OvarianSet@meta.data$nFeature_RNA) 
+# Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#    67    3545    4027    3900    4576    7336 
+
+#Set up an upper and lower limit, na.rm=TRUE because the features column has some missing values 
+## Upper limit is the mean of the feature values + 2 sd 
+nFeatUpper <- mean(OvarianSet@meta.data$nFeature_RNA, na.rm=TRUE) + 2*sd(OvarianSet@meta.data$nFeature_RNA, na.rm=TRUE) ##  6530.94444
+nFeatLower <- 200 
+
+summary(OvarianSet@meta.data$percent.mito)
+# Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+# 0.00000 0.04116 0.05055 0.05370 0.05954 0.93581
+### assumption: cancer cells may have higher metabolic rate
+##Set an upper limit with the mean and 2 sd, not use the 5%, we need to cut off a higher percentage anyways because cancer cells have a high metabolic rate 
+perMitoUpper <- mean(OvarianSet@meta.data$percent.mito, na.rm=TRUE) + 2*sd(OvarianSet@meta.data$percent.mito, na.rm=TRUE) ## [1] 0.184092028
+##
+
+setwd("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022")
+#Create more Vlnplots now adding lines for the limits established 
+pdf("./OvarianSet_S+R_ViolinPlot_perMito_wCutoffs_2019-10-28.pdf")
+vPlot <- VlnPlot(object=OvarianSet, features = c("percent.mito"))+geom_hline(yintercept=perMitoUpper, linetype="dashed", color="red", size=1)
+print(vPlot)
+dev.off()
+
+pdf("./OvarianSet_S+R_ViolinPlot_nFeatures_wCutoffs_2019-10-28.pdf")
+vPlot <- VlnPlot(object=OvarianSet, features = c("nFeature_RNA"))+geom_hline(yintercept=nFeatUpper, linetype="dashed", color="red", size=1)+geom_hline(yintercept=nFeatLower, linetype="dashed", color="red", size=1)
+print(vPlot)
+dev.off()
+
+
+#Divide the data based on the limits established
+## subset the paired dataset
+OvarianSet <- subset(x=OvarianSet, subset=nFeature_RNA > nFeatLower & nFeature_RNA < nFeatUpper & percent.mito < perMitoUpper)
+
+dim(OvarianSet)
+# [1] 33538  2827
+saveRDS(OvarianSet, file = "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSet_S+R_QC-Subset-Cohort_SeuratObj_20191028.rds")
+
+
+## Maximum allowed total size (in bytes) of global variables identified
+options(future.globals.maxSize=402653184000) ###  384GB: 536870912000 for compute-3-5
+```
+# STEP 3: Normalize
+Normalize count data per cell and transform to log scale. Make variable contribute equally to the analysis 
+LogNormalize: feature counts for each cell are divided by the total counts for that cell and multiplied by the scale factor 
+
+```{r}
+OVCAR4 <- NormalizeData(object=OVCAR4, normalization.method="LogNormalize", scale.factor=1e4)
+dim(OVCAR4)
+# 33538  2827
+OVCA3 <- NormalizeData(object=OVCA3, normalization.method="LogNormalize", scale.factor=1e4)
+dim(OVCA3)
+# 33538  2262
+OvarianSet <- NormalizeData(object=OvarianSet, normalization.method = "LogNormalize", scale.factor = 1e4)
+dim(OvarianSet)
+# 33538  5090
+
+saveRDS(OVCAR4, file = "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_S+R_QC-Subset-Cohort_SeuratObj_thruStep3_20191028.rds")
+saveRDS(OVCA3, file = "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_S+R_QC-Subset-Cohort_SeuratObj_thruStep3_20191028.rds")
+saveRDS(OvarianSet, file = "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSet_S+R_QC-Subset-Cohort_SeuratObj_thruStep3_20191028.rds")
+
+```
+# sTEP 4: Detection of variable features across the single cells 
+Seurat can calculate high variable genes and focuses on these 
+Check out the seurat section 9 of this link : https://scrnaseq-course.cog.sanger.ac.uk/website/seurat-chapter.html
+```{r}
+# FindVariableFeatures calculates the average expression adn dispersion for each gene, places these genes into bins and calculates a z-score for dispersion within each bin 
+## Usual features found online
+OVCAR4 <- FindVariableFeatures(object=OVCAR4, selection.method = 'mean.var.plot', mean.cutoff = c(0.0125, 3), dispersion.cutoff = c(0.5, Inf), do.plot=TRUE)
+length(x = VariableFeatures(object=OVCAR4))  
+## number of variable features detected after filtering, normalization: 3833
+dim(OVCAR4) #3538  2827
+
+saveRDS(OVCAR4, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_S+R_QC-Subset-Cohort_SeuratObj_thruStep4_20191028.rds")
+
+
+OVCA3 <- FindVariableFeatures(object=OVCA3, selection.method = 'mean.var.plot', mean.cutoff = c(0.0125, 3), dispersion.cutoff = c(0.5, Inf), do.plot=TRUE)
+length(x = VariableFeatures(object=OVCA3))  
+## number of variable features detected after filtering, normalization: 4287
+dim(OVCA3) # 33538  2262
+
+saveRDS(OVCA3, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_S+R_QC-Subset-Cohort_SeuratObj_thruStep4_20191028.rds")
+
+
+OvarianSet <- FindVariableFeatures(object=OvarianSet, selection.method = 'mean.var.plot', mean.cutoff = c(0.0125, 3), dispersion.cutoff = c(0.5, Inf), do.plot=TRUE)
+length(x = VariableFeatures(object=OvarianSet))  
+## number of variable features detected after filtering, normalization: 
+dim(OvarianSet) # 33538  5090
+
+saveRDS(OvarianSet, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSet_S+R_QC-Subset-Cohort_SeuratObj_thruStep4_20191028.rds")
+```
+# STEP 5: Scaling data and removing unwanted sources of variation 
+Remove 'uninteresting' sources of variation such as technical noise, batch effects and biological sources of variation (cell cycle arrest). Improve analysis since it reduces dimensions and improves clustering
+```{r}
+#Seurat scaledata function already does all these things for use, we only want to scale certain variables 
+OVCAR4 <- ScaleData(object=OVCAR4, vars.to.regress = c("nCount_RNA","percent.mito")) 
+saveRDS(OVCAR4, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_S+R_QC-Subset-Cohort_SeuratObj_thruStep5_20191028.rds")
+
+OVCA3 <- ScaleData(object=OVCA3, vars.to.regress = c("nCount_RNA","percent.mito")) 
+saveRDS(OVCA3, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_S+R_QC-Subset-Cohort_SeuratObj_thruStep5_20191028.rds")
+
+OvarianSet <- ScaleData(object=OvarianSet, vars.to.regress = c("nCount_RNA","percent.mito")) 
+saveRDS(OvarianSet, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSet_S+R_QC-Subset-Cohort_SeuratObj_thruStep5_20191028.rds")
+```
+# STEP 6: Perform linear dimension reduction/ Determine PCA 
+Do linear dimension reduction to group the features per principal components. The ones that are the most similar. Clustering starts here
+Look at different graphs but heatamps are most helpful when trying to decide which PCs to include for further downstream analyses. Cells and genes ordered according to their PCA scores. We want to select the PCA that have the most variable genes to select for further study 
+ESTABLISHED: We randomly permute a subset of the data (1% by default) and rerun PCA, constructing a ‘null distribution’ of gene scores, and repeat this procedure. We identify ‘significant’ PCs as those who have a strong enrichment of low p-value genes.
+
+In order to observe variable PC, we can do different things, heatmap, JackStrawPlot() provides a visualization tool for comparing the distribution of p-values for each PC with a uniform distribution (dashed line). 'Significant' PCs will show a strong enrichment of features with low p-values (solid curve above the dashed line) 
+Code: JackStrawPlot(OVCAR4, dims= 1:20) check for variability 
+OVCAR4 <- JackStraw(OVCAR4, dims = 50)
+OVCAR4 <- ScoreJackStraw(OVCAR4, dims = 1:50)
+JackStrawPlot(OVCAR4, dims = 1:50)
+## OVCAR4
+```{r}
+#Get the principal components, Seurat selects the most variable and orders them, we have to decide what PC we will be working with  
+OVCAR4 <- RunPCA(object=OVCAR4, features=VariableFeatures(object=OVCAR4), verbose = TRUE, npcs=200)
+
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OVCAR4_S+R_QC-Subset-Cohort_PCA-Dim-Loadings_2019-10-28.pdf")
+vdlPlot <- VizDimLoadings(object=OVCAR4, dims = 1:2)
+print(vdlPlot)
+dev.off()
+
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OVCAR4_S+R_QC-Subset-Cohort_PCA-Dim-Plot_2019-10-28.pdf")
+dPlot <- DimPlot(object=OVCAR4)
+print(dPlot)
+dev.off()
+
+OVCAR4 <- ProjectDim(object=OVCAR4)
+
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OVCAR4_S+R_QC-Subset-Cohort_PCA-Dim-Heatmaps-1thr12_2019-10-28.pdf")
+dhPlot <- DimHeatmap(object=OVCAR4, dims = 1:9, cells = 500, balanced = TRUE) #show 9 principal components 
+print(dhPlot)
+dev.off()
+
+saveRDS(OVCAR4, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_S+R_QC-Subset-Cohort_SeuratObj_thruStep6_20191028.rds")
+
+```
+## OVCA3 
+```{r}
+OVCA3 <- RunPCA(object=OVCA3, features=VariableFeatures(object=OVCA3), verbose = TRUE, npcs=200)
+
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OVCA3_S+R_QC-Subset-Cohort_PCA-Dim-Loadings_2019-10-28.pdf")
+vdlPlot <- VizDimLoadings(object=OVCA3, dims = 1:2) #Only 2 principal components 
+print(vdlPlot)
+dev.off()
+#Shows only two principal components and the genes that are being upregulated 
+
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OVCA3_S+R_QC-Subset-Cohort_PCA-Dim-Plot_2019-10-28.pdf")
+dPlot <- DimPlot(object=OVCA3)
+print(dPlot)
+dev.off()
+#Shows a PC plot, similar to UMAP, showing the correlation between 2 principal components, look at the genes expressed in the middle of both clusters 
+
+OVCA3 <- ProjectDim(object=OVCA3)
+
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OVCA3_S+R_QC-Subset-Cohort_PCA-Dim-Heatmaps-1thr12_2019-10-28.pdf")
+dhPlot <- DimHeatmap(object=OVCA3, dims = 1:9, cells = 500, balanced = TRUE)
+print(dhPlot)
+dev.off()
+#Shows heatmaps for all the principal components 
+
+saveRDS(OVCA3, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_S+R_QC-Subset-Cohort_SeuratObj_thruStep6_20191028.rds")
+```
+## OvarianSet
+```{r}
+OvarianSet <- RunPCA(object=OvarianSet, features=VariableFeatures(object=OvarianSet), verbose = TRUE, npcs=200)
+
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet_S+R_QC-Subset-Cohort_PCA-Dim-Loadings_2019-10-28.pdf")
+vdlPlot <- VizDimLoadings(object=OvarianSet, dims = 1:2)
+print(vdlPlot)
+dev.off()
+
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet_S+R_QC-Subset-Cohort_PCA-Dim-Plot_2019-10-28.pdf")
+dPlot <- DimPlot(object=OvarianSet)
+print(dPlot)
+dev.off()
+
+OvarianSet <- ProjectDim(object=OvarianSet)
+
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet_S+R_QC-Subset-Cohort_PCA-Dim-Heatmaps-1thr12_2019-10-28.pdf")
+dhPlot <- DimHeatmap(object=OvarianSet, dims = 1:9, cells = 500, balanced = TRUE)
+print(dhPlot)
+dev.off()
+
+saveRDS(OvarianSet, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSet_S+R_QC-Subset-Cohort_SeuratObj_thruStep6_20191028.rds")
+```
+# STEP 7: Find Clusters
+
+```{r}
+library(data.table)
+library(dplyr)
+library(rdetools)
+library(clustree)
+```
+Create a k-nearest neighbor (KNN) graph, that will draw connections between cells with similar feature expression patterns, and then partition this graph into highly interconnected communities 
+KNN graphs constructed are based in euclidean distance in PCA space, and refine the edge weights between two cells based on the shared overlap in their local neighborhoods, Do this using the FindNeighbors() function 
+Cluster cells use an optimization technique such as Louvain algorithm (detect communities in large networks) or SLM to group cells together. FindCLuster() function does this, and contains a resolution parameter that sets the 'granularity' of the downstream clustering, the higher the values the more clusters. Set parameter between 0.4-1.2 fro around 3000 cells. 
+
+
+
+## OVCAR4
+```{r}
+OVCAR4 <- FindNeighbors(object=OVCAR4, dims = 1:50)
+OVCAR4 <- FindClusters(object=OVCAR4, resolution = 0.6)
+
+# 0%   10   20   30   40   50   60   70   80   90   100%
+# [----|----|----|----|----|----|----|----|----|----|
+# **************************************************|
+# Modularity Optimizer version 1.3.0 by Ludo Waltman and Nees Jan van Eck
+
+# Number of nodes: 2827
+# Number of edges: 135713
+
+# Running Louvain algorithm...
+# Maximum modularity in 10 random starts: 0.8304
+# Number of communities: 7
+# Elapsed time: 0 seconds
+# 3 singletons identified. 7 final clusters.
+
+saveRDS(OVCAR4, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_S+R_QC-Subset-Cohort_SeuratObj_thruStep7_Res0p6only_20191028.rds")
+
+file1 <- "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4OutputDataNames_res0p6_20191028.csv";
+file2 <- "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4OutputData_res0p6_20191028.csv";
+
+cat(OVCAR4@meta.data$RNA_snn_res.0.6, file=file2, sep=",\n") #look at the matrix, makes a readable vector 
+
+listNames <- OVCAR4@meta.data$orig.ident
+write.table(data.frame(listNames),
+          row.names=FALSE,
+          col.names = FALSE, 
+          file = file1,
+          sep=",")
+
+mydat1 <- read.csv(file2)
+mydat2 <- read.csv(file1)
+fulldat <- cbind(mydat2[1],mydat1[1])
+fulltab <- as.data.table(fulldat)
+# name table columns
+names(fulltab)[1] <- paste("UMI")
+names(fulltab)[2] <- paste("cluster")
+# group data based on clusters
+group_by(fulltab, cluster)
+# create a table counting unique UMIs/cells per cluster
+tabPerClus <- fulltab %>% group_by(cluster) %>% count()
+type <- sub("\\_.*","",fulltab$UMI)
+fulltab <- cbind(fulltab, type)
+
+divout <-  "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_S+R_QC-Subset-Cohort_CellBreakdown_PerClusterPerType_Res0p6only_20191028.csv"
+A <- fulltab %>% group_by(cluster) %>% count(UMI)
+write.csv(A, file=divout)
+
+rm(file1,file2,mydat1,mydat2,fulldat,fulltab,tabPerClus,type,fulltab,A) #rm is a removed function 
+```
+##OVCA3
+```{r}
+OVCA3 <- FindNeighbors(object=OVCA3, dims = 1:50)
+OVCA3 <- FindClusters(object=OVCA3, resolution = 0.6)
+
+# 0%   10   20   30   40   50   60   70   80   90   100%
+# [----|----|----|----|----|----|----|----|----|----|
+# **************************************************|
+# Modularity Optimizer version 1.3.0 by Ludo Waltman and Nees Jan van Eck
+
+# Number of nodes: 2262
+# Number of edges: 97506
+
+# Running Louvain algorithm...
+# Maximum modularity in 10 random starts: 0.7501
+# Number of communities: 5
+# Elapsed time: 0 seconds
+# 4 singletons identified. 6 final clusters?????
+
+saveRDS(OVCA3, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_S+R_QC-Subset-Cohort_SeuratObj_thruStep7_Res0p6only_20191028.rds")
+
+file1 <- "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3OutputDataNames_res0p6_20191028.csv";
+file2 <- "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3OutputData_res0p6_20191028.csv";
+
+cat(OVCA3@meta.data$RNA_snn_res.0.6, file=file2, sep=",\n")
+
+listNames <- OVCA3@meta.data$orig.ident
+write.table(data.frame(listNames),
+          row.names=FALSE,
+          col.names = FALSE, 
+          file = file1,
+          sep=",")
+
+mydat1 <- read.csv(file2)
+mydat2 <- read.csv(file1)
+fulldat <- cbind(mydat2[1],mydat1[1])
+fulltab <- as.data.table(fulldat)
+# name table columns
+names(fulltab)[1] <- paste("UMI")
+names(fulltab)[2] <- paste("cluster")
+# group data based on clusters
+group_by(fulltab, cluster)
+# create a table counting unique UMIs/cells per cluster
+tabPerClus <- fulltab %>% group_by(cluster) %>% count()
+type <- sub("\\_.*","",fulltab$UMI)
+fulltab <- cbind(fulltab, type)
+
+divout <-  "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_S+R_QC-Subset-Cohort_CellBreakdown_PerClusterPerType_Res0p6only_20191028.csv"
+A <- fulltab %>% group_by(cluster) %>% count(UMI)
+write.csv(A, file=divout)
+
+rm(file1,file2,mydat1,mydat2,fulldat,fulltab,tabPerClus,type,A)
+
+```
+
+## OvarianSet
+```{r}
+OvarianSet <- FindNeighbors(object=OvarianSet, dims = 1:50)
+OvarianSet <- FindClusters(object=OvarianSet, resolution = 0.6)
+
+# 0%   10   20   30   40   50   60   70   80   90   100%
+# [----|----|----|----|----|----|----|----|----|----|
+# **************************************************|
+# Modularity Optimizer version 1.3.0 by Ludo Waltman and Nees Jan van Eck
+
+# Number of nodes: 22710
+# Number of edges: 966102
+
+# Running Louvain algorithm...
+# Maximum modularity in 10 random starts: 0.9493
+# Number of communities: 25
+# Elapsed time: 3 seconds
+
+saveRDS(OvarianSet, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSet_S+R_QC-Subset-Cohort_SeuratObj_thruStep7_Res0p6only_20191028.rds")
+
+file1 <- "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSetOutputDataNames_res0p6_20191028.csv";
+file2 <- "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSetOutputData_res0p6_20191028.csv";
+
+cat(OvarianSet@meta.data$RNA_snn_res.0.6, file=file2, sep=",\n")
+
+listNames <- OvarianSet@meta.data$orig.ident
+write.table(data.frame(listNames),
+          row.names=FALSE,
+          col.names = FALSE, 
+          file = file1,
+          sep=",")
+
+mydat1 <- read.csv(file2)
+mydat2 <- read.csv(file1)
+fulldat <- cbind(mydat2[1],mydat1[1])
+fulltab <- as.data.table(fulldat)
+# name table columns
+names(fulltab)[1] <- paste("UMI")
+names(fulltab)[2] <- paste("cluster")
+# group data based on clusters
+group_by(fulltab, cluster)
+# create a table counting unqiue UMIs/cells per cluster
+tabPerClus <- fulltab %>% group_by(cluster) %>% count()
+type <- sub("\\_.*","",fulltab$UMI)
+fulltab <- cbind(fulltab, type)
+
+divout <-  "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSet_S+R_QC-Subset-Cohort_CellBreakdown_PerClusterPerType_Res0p6only_20191028.csv"
+
+A <- fulltab %>% group_by(cluster) %>% count(UMI)
+write.csv(A, file=divout)
+
+rm(file1,file2,mydat1,mydat2,fulldat,fulltab,tabPerClus,type,A)
+
+```
+## Different way to do the stuff above 
+### OVCAR4
+```{r}
+range <- c(0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0)
+for (res in range) {
+  OVCAR4 <- FindNeighbors(object=OVCAR4, dims = 1:50)
+  OVCAR4 <- FindClusters(object=OVCAR4, resolution = res, n.start=100)
+}
+
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OVCAR4_S+R_QC-Subset-Cohort_SeuratObj_clustree_ResScan_20191028.pdf", width=15, height=24)
+tPlot <- clustree(OVCAR4, prefix = 'RNA_snn_res.')
+print(tPlot)
+dev.off()
+
+saveRDS(OVCAR4, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_S+R_QC-Subset-Cohort_SeuratObj_thruStep7_multiRes_20191028.rds")
+rm(range)
+```
+### OVCA3
+```{r}
+range <- c(0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0)
+for (res in range) {
+  OVCA3 <- FindNeighbors(object=OVCA3, dims = 1:50)
+  OVCA3 <- FindClusters(object=OVCA3, resolution = res, n.start=100)
+}
+
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OVCA3_S+R_QC-Subset-Cohort_SeuratObj_clustree_ResScan_20191028.pdf", width=15, height=24)
+tPlot <- clustree(OVCA3, prefix = 'RNA_snn_res.')
+print(tPlot)
+dev.off()
+
+saveRDS(OVCA3, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_S+R_QC-Subset-Cohort_SeuratObj_thruStep7_multiRes_20191028.rds")
+rm(range)
+```
+### Ovarian Set 
+```{r}
+range <- c(0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0)
+for (res in range) {
+  OvarianSet <- FindNeighbors(object=OvarianSet, dims = 1:50)
+  OvarianSet <- FindClusters(object=OvarianSet, resolution = res, n.start=100)
+}
+
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet_S+R_QC-Subset-Cohort_SeuratObj_clustree_ResScan_20191028.pdf", width=15, height=24)
+tPlot <- clustree(OvarianSet, prefix = 'RNA_snn_res.')
+print(tPlot)
+dev.off()
+
+saveRDS(OvarianSet, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSet_S+R_QC-Subset-Cohort_SeuratObj_thruStep7_multiRes_20191028.rds")
+ 
+```
+
+```{r}
+#Run only on my computer 
+library(data.table)
+library(dplyr)
+library(rdetools)
+library(future)
+library(ggplot2)
+library(bigmemory)
+library(Seurat)
+```
+
+# STEP 8: UMAP
+
+##OVCAR4
+```{r}
+OVCAR4 <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_S+R_QC-Subset-Cohort_SeuratObj_thruStep7_Res0p6only_20191028.rds")
+OVCAR4 <- RunUMAP(object=OVCAR4, reduction = "pca", dims = 1:50)
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OVCAR4_S+R_QC-Subset-Cohort_UMAP_byCluster_Res0p6only_2019-10-28.pdf", width=12, height=8)#show all the gene clusters 
+dPlot <- DimPlot(OVCAR4, reduction="umap") + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OVCAR4_S+R_QC-Subset-Cohort_UMAP_clustersByType_Res0p6only_2019-10-28.pdf", width=12, height=8) #show 3 clusters: resistant and sensitive 
+dPlot <- DimPlot(OVCAR4, reduction="umap", group.by='orig.ident') + xlim(-15, 15) + ylim(-15, 15) #group.by looks in the metadata section of the dataset and then orig.ident has both sets of resistant and sensitive cells
+print(dPlot)
+dev.off()
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OVCAR4_S+R_QC-Subset-Cohort_UMAP_clustersByType_noLegend_Res0p6only_2019-10-28.pdf", width=12, height=8)
+dPlot <- DimPlot(OVCAR4, reduction="umap", group.by='orig.ident') + theme(legend.position = "none") + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+postscript(file="C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_S+R_QC-Subset-Cohort_UMAP_bySampleID_Res0p6only_2019-10-28_forAdobe.eps", width=12, height=8, horizontal = TRUE, onefile = FALSE)
+DimPlot(OVCAR4, reduction="umap", group.by='orig.ident') + xlim(-15, 15) + ylim(-15, 15)
+dev.off()
+saveRDS(OVCAR4, file = "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_S+R_QC-Subset-Cohort_SeuratObj_thruStep8_Res0p6only_20191028.rds")
+#OVCAR4 <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_S+R_QC-Subset-Cohort_SeuratObj_thruStep8_Res0p6only_20191028.rds")
+```
+
+##OVCA3
+```{r}
+OVCA3 <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_S+R_QC-Subset-Cohort_SeuratObj_thruStep7_Res0p6only_20191028.rds")
+OVCA3 <- RunUMAP(object=OVCA3, reduction = "pca", dims = 1:50)
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OVCA3_S+R_QC-Subset-Cohort_UMAP_byCluster_Res0p6only_2019-10-28.pdf", width=12, height=8)
+dPlot <- DimPlot(OVCA3, reduction="umap") + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OVCA3_S+R_QC-Subset-Cohort_UMAP_clustersByType_Res0p6only_2019-10-28.pdf", width=12, height=8)
+dPlot <- DimPlot(OVCA3, reduction="umap", group.by='orig.ident') + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OVCA3_S+R_QC-Subset-Cohort_UMAP_clustersByType_noLegend_Res0p6only_2019-10-28.pdf", width=12, height=8)
+dPlot <- DimPlot(OVCA3, reduction="umap", group.by='orig.ident') + theme(legend.position = "none") + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+postscript(file="C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_S+R_QC-Subset-Cohort_UMAP_bySampleID_Res0p6only_2019-10-28_forAdobe.eps", width=12, height=8, horizontal = TRUE, onefile = FALSE)
+DimPlot(OVCA3, reduction="umap", group.by='orig.ident') + xlim(-15, 15) + ylim(-15, 15)
+dev.off()
+saveRDS(OVCA3, file = "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_S+R_QC-Subset-Cohort_SeuratObj_thruStep8_Res0p6only_20191028.rds")
+#OVCA3 <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_S+R_QC-Subset-Cohort_SeuratObj_thruStep8_Res0p6only_20191028.rds")
+```
+
+##Ovarian Set 
+```{r}
+OvarianSet <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSet_S+R_QC-Subset-Cohort_SeuratObj_thruStep7_Res0p6only_20191028.rds")
+OvarianSet <- RunUMAP(object=OvarianSet, reduction = "pca", dims = 1:50)
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet_S+R_QC-Subset-Cohort_UMAP_byCluster_Res0p6only_2019-10-28.pdf", width=12, height=8)
+dPlot <- DimPlot(OvarianSet, reduction="umap") + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet_S+R_QC-Subset-Cohort_UMAP_clustersByType_Res0p6only_2019-10-28.pdf", width=12, height=8)
+dPlot <- DimPlot(OvarianSet, reduction="umap", group.by='orig.ident') + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet_S+R_QC-Subset-Cohort_UMAP_clustersByType_noLegend_Res0p6only_2019-10-28.pdf", width=12, height=8)
+dPlot <- DimPlot(OvarianSet, reduction="umap", group.by='orig.ident') + theme(legend.position = "none") + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+postscript(file="C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSet_S+R_QC-Subset-Cohort_UMAP_bySampleID_Res0p6only_2019-10-28_forAdobe.eps", width=12, height=8, horizontal = TRUE, onefile = FALSE)
+DimPlot(OvarianSet, reduction="umap", group.by='orig.ident') + xlim(-15, 15) + ylim(-15, 15)
+dev.off()
+saveRDS(OvarianSet, file = "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSet_S+R_QC-Subset-Cohort_SeuratObj_thruStep8_Res0p6only_20191028.rds")
+#OvarianSet <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSet_S+R_QC-Subset-Cohort_SeuratObj_thruStep8_Res0p6only_20191028.rds")
+```
+## Plotting per cluster to look at cells in each cluster 
+No more thn 10 clusters were found so we only plotted 10 
+```{r}
+clus0.cells <- subset(x=OvarianSet, subset = seurat_clusters=="0")
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_UMAP_Cluster_0_byType_2019-10-29.pdf")
+dPlot <- DimPlot(clus0.cells, reduction="umap", group.by='orig.ident') + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+clus1.cells <- subset(x=OvarianSet, subset = seurat_clusters=="1")
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_UMAP_Cluster_1_byType_2019-10-29.pdf")
+dPlot <- DimPlot(clus1.cells, reduction="umap", group.by='orig.ident') + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+clus2.cells <- subset(x=OvarianSet, subset = seurat_clusters=="2")
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_UMAP_Cluster_2_byType_2019-10-29.pdf")
+dPlot <- DimPlot(clus2.cells, reduction="umap", group.by='orig.ident') + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+clus3.cells <- subset(x=OvarianSet, subset = seurat_clusters=="3")
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_UMAP_Cluster_3_byType_2019-10-29.pdf")
+dPlot <- DimPlot(clus3.cells, reduction="umap", group.by='orig.ident') + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+clus4.cells <- subset(x=OvarianSet, subset = seurat_clusters=="4")
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_UMAP_Cluster_4_byType_2019-10-29.pdf")
+dPlot <- DimPlot(clus4.cells, reduction="umap", group.by='orig.ident') + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+clus5.cells <- subset(x=OvarianSet, subset = seurat_clusters=="5")
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_UMAP_Cluster_5_byType_2019-10-29.pdf")
+dPlot <- DimPlot(clus5.cells, reduction="umap", group.by='orig.ident') + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+clus6.cells <- subset(x=OvarianSet, subset = seurat_clusters=="6")
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_UMAP_Cluster_6_byType_2019-10-29.pdf")
+dPlot <- DimPlot(clus6.cells, reduction="umap", group.by='orig.ident') + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+clus7.cells <- subset(x=OvarianSet, subset = seurat_clusters=="7")
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_UMAP_Cluster_7_byType_2019-10-29.pdf")
+dPlot <- DimPlot(clus7.cells, reduction="umap", group.by='orig.ident') + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+clus8.cells <- subset(x=OvarianSet, subset = seurat_clusters=="8")
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_UMAP_Cluster_8_byType_2019-10-29.pdf")
+dPlot <- DimPlot(clus8.cells, reduction="umap", group.by='orig.ident') + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+clus9.cells <- subset(x=OvarianSet, subset = seurat_clusters=="9") 
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_UMAP_Cluster_9_byType_2019-10-29.pdf")
+dPlot <- DimPlot(clus9.cells, reduction="umap", group.by='orig.ident') + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+clus10.cells <- subset(x=OvarianSet, subset = seurat_clusters=="10")
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_UMAP_Cluster_10_byType_2019-10-29.pdf")
+dPlot <- DimPlot(clus10.cells, reduction="umap", group.by='orig.ident') + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+```
+## Individual UMAPs on OvarianSet
+Look at each cell line and sensitive and resistant to see what clusters are present on each 
+```{r}
+OVCAR4.S.cells <- subset(x=OvarianSet, subset = orig.ident=="OVCAR4_S")
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_OVCAR4-S_UMAP_byCluster_2019-10-29.pdf")
+dPlot <- DimPlot(OVCAR4.S.cells, reduction="umap") + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_OVCAR4-S_UMAP_clustersByType_2019-10-29.pdf")
+dPlot <- DimPlot(OVCAR4.S.cells, reduction="umap", group.by='orig.ident') + theme(legend.position = "none") + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+
+OVCAR4.R.cells <- subset(x=OvarianSet, subset = orig.ident=="OVCAR4_R")
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_OVCAR4-R_UMAP_byCluster_2019-10-29.pdf")
+dPlot <- DimPlot(OVCAR4.R.cells, reduction="umap") + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_OVCAR4-R_UMAP_clustersByType_2019-10-29.pdf")
+dPlot <- DimPlot(OVCAR4.R.cells, reduction="umap", group.by='orig.ident') + theme(legend.position = "none") + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+
+OVCA3.S.cells <- subset(x=OvarianSet, subset = orig.ident=="OVCA3_S")
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_OVCA3-S_UMAP_byCluster_2019-10-29.pdf")
+dPlot <- DimPlot(OVCA3.S.cells, reduction="umap") + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_OVCA3-S_UMAP_clustersByType_2019-10-29.pdf")
+dPlot <- DimPlot(OVCA3.S.cells, reduction="umap", group.by='orig.ident') + theme(legend.position = "none") + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+
+OVCA3.R.cells <- subset(x=OvarianSet, subset = orig.ident=="OVCA3_R")
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_OVCA3-R_UMAP_byCluster_2019-10-29.pdf")
+dPlot <- DimPlot(OVCA3.R.cells, reduction="umap") + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_OVCA3-R_UMAP_clustersByType_2019-10-29.pdf")
+dPlot <- DimPlot(OVCA3.R.cells, reduction="umap", group.by='orig.ident') + theme(legend.position = "none") + xlim(-15, 15) + ylim(-15, 15)
+print(dPlot)
+dev.off()
+```
+# STEP MARKER ANALYSIS: Look at different markers 
+## Shortcut to import files and packages
+Look at different proteins of interest 
+Only load the ovarian set that has gone through the clustering and UMAP steps 
+
+OVACAR4
+  Without Harmony (same file) 
+OVCAR4.F <- readRDS ("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_F_S+R_QC-Subset-Cohort_SeuratObj_HarTest_Res0p6only_20191028.rds")
+OVCAR4 <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_S+R_QC-Subset-Cohort_SeuratObj_thruStep8_Res0p6only_20191028.rds")
+  With harmony 
+OVCAR4.F.H <- readRDS ("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_F_H_S+R_QC-Subset-Cohort_SeuratObj_HarTest_Res0p6only_20191028.rds")
+
+OVCA3
+  Without Harmony
+OVCA3 <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_S+R_QC-Subset-Cohort_SeuratObj_thruStep8_Res0p6only_20191028.rds")
+OVCA3.F <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_F_S+R_QC-Subset-Cohort_SeuratObj_HarTest_Res0p6only_20191028.rds")
+  With harmony
+OVCA3.F.H <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_F_H_S+R_QC-Subset-Cohort_SeuratObj_HarTest_Res0p6only_20191028.rds")
+ 
+OVARIAN SET 
+  Without Harmony (same file)
+OvarianSet <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSet_S+R_QC-Subset-Cohort_SeuratObj_thruStep8_Res0p6only_20191028.rds")
+OvarianSet.F <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSet_F_S+R_QC-Subset-Cohort_SeuratObj_HarTest_Res0p6only_20191028.rds")
+  With harmony 
+OvarianSet.F.H <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSet_F_H_S+R_QC-Subset-Cohort_SeuratObj_HarTest_Res0p6only_20191028.rds")
+
+library(future) #simple and uniform way of evaluating R expressions
+library(ggplot2) #plotting library 
+library(bigmemory)#manipulation of big objects
+library(Seurat) #seurat library 
+sessionInfo()
+
+library(data.table)
+library(dplyr)
+library(rdetools)
+library(clustree)
+
+library(data.table)
+library(dplyr)
+library(rdetools)
+library(future)
+library(ggplot2)
+library(bigmemory)
+library(Seurat)
+
+## Lactase markers from breast cancer analysis 
+```{r}
+OvarianSet <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSet_S+R_QC-Subset-Cohort_SeuratObj_thruStep8_Res0p6only_20191028.rds")
+lacMarkers1 <- c("CXCL14","UPK3A","KRT6A","KRT4","S100A9","BTC","MUCL1","S100A2","SCGB1A1",
+                "CRCT1","GLRA3","PCSK2","OAS2","SPRR1A","FAM133A","KRT17","CASP14","BMP5",
+                "PEG10","KCNJ3","RAMP3","SPRR1B","TMEM139","LCE1F","KLK11","CEACAM6","GABBR2",
+                "KRT23","WIPF1","DHRS3","MUC5B","IFI27","CXorf61")
+lacMarkers2 <- c("VGLL1","GPNMB","TDRD1","SLFN11","CXCL17","PCDH7","S100A7","DSCR8","SPRR3",
+                "MID1","LINC00052","C1orf95","SAMD9","TGM2","AARD","LCN2","DIO2","IFIT3","ZNF827",
+                "SPINK5","DEFB1","RDH12","SERPINA5","ABCA4","IFNL1","KLK8","PLAT","XAF1","RPTN",
+                "H19","STRA6","IFIT1","KRTDAP","NTN4")
+lacMarkers3 <- c("GUCY1A3","LHX1","PSCA","CAV1","LIMCH1","RGL3","AGR3","GPER","KCNE4","IGFBP5","MGP",
+                "ALDH3A1","KLHDC7B","ANKRD1","PDE4D","ANG","ERC2","RIMS2","FXYD4","MME","FOXI3","CCL26",
+                "KCNJ8","S100A8","KRT16","SLPI","TENM3","KRT81","WISP2","TNFSF15","LOC100507584",
+                "ASCL1","SLC24A3")
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_lactateMarkers1_DotPlot_2019-10-28.pdf",width=12, height=8)
+dPlot <- DotPlot(OvarianSet, features = rev(lacMarkers1), cols = c("blue", "red"), dot.scale = 8, group.by='orig.ident') + RotatedAxis()
+print(dPlot)
+dev.off()
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_lactateMarkers2_DotPlot_2019-10-28.pdf",width=12, height=8)
+dPlot <- DotPlot(OvarianSet, features = rev(lacMarkers2), cols = c("blue", "red"), dot.scale = 8, group.by='orig.ident') + RotatedAxis()
+print(dPlot)
+dev.off()
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_lactateMarkers3_DotPlot_2019-10-28.pdf",width=12, height=8)
+dPlot <- DotPlot(OvarianSet, features = rev(lacMarkers3), cols = c("blue", "red"), dot.scale = 8, group.by='orig.ident') + RotatedAxis()
+print(dPlot)
+dev.off()
+```
+
+## Cysteine Cathepsins markers
+Check for cathepsin D
+```{r}
+cts.markers.to.plot <- c("CTSK","CTSS","CTSL","CTSV","CTSD")
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_CTS_DotPlot_2019-10-28.pdf")
+dPlot <- DotPlot(OvarianSet, features = rev(cts.markers.to.plot), cols = c("blue", "red"), dot.scale = 8, group.by='orig.ident') + RotatedAxis()
+print(dPlot)
+dev.off()
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_CTS_VlnPlot_CTSS_2019-10-28.pdf")
+plot1 <- VlnPlot(OvarianSet, features = "CTSS", group.by='orig.ident', pt.size = 0, combine = FALSE)
+print(plot1)
+dev.off()
+print(plot1)
+dev.off()
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_CTS_VlnPlot_CTSL_2019-10-28.pdf")
+plot1 <- VlnPlot(OvarianSet, features = "CTSL", group.by='orig.ident', pt.size = 0, combine = FALSE)
+print(plot1)
+dev.off()
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_CTS_VlnPlot_CTSV_2019-10-28.pdf")
+plot1 <- VlnPlot(OvarianSet, features = "CTSV", group.by='orig.ident', pt.size = 0, combine = FALSE)
+print(plot1)
+dev.off()
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_CTS_VlnPlot_CTSK_2019-10-28.pdf")
+plot1 <- VlnPlot(OvarianSet, features = "CTSK", group.by='orig.ident', pt.size = 0, combine = FALSE)
+print(plot1)
+dev.off()
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_CTS_VlnPlot_CTSD_2019-10-28.pdf")
+plot1 <- VlnPlot(OvarianSet, features = "CTSD", group.by='orig.ident', pt.size = 0, combine = FALSE)
+print(plot1)
+dev.off()
+
+
+#View all the plots at the same time 
+pdf("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/analysis 02-04-2022/OvarianSet/OvarianSet_S+R_QC-Subset-Cohort_CTS_VlnPlot_ALL_2019-10-28.pdf")
+vPlotALL <- VlnPlot(OvarianSet, features = c("CTSS", "CTSL", "CTSV","CTSK"), group.by = 'orig.ident', ncol=4)
+print(vPlotALL)
+dev.off()
+
+```
+#STEP DEG: DIFFERENTIALLY EXPRESSED GENES 
+Identifies differentially expressed genes between two groups of cells using a Wilcoxon Rank Sum test (default)
+Reports only both positive and negatively differentially expressed genes
+Requires the feature to be detected at a min of 25% in either groups. Limit testing to genes which show, on average, at least X-fold difference (log-scale) between the two groups of cells 
+
+## Ovarian Set 
+### Genes without harmony 
+```{r}
+#Find markers for each of the identity classes in a dataset
+OvarianSet.F <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSet_F_S+R_QC-Subset-Cohort_SeuratObj_HarTest_Res0p6only_20191028.rds")
+OvarianSet.markers <- FindAllMarkers(OvarianSet.F, min.pct = 0.25, logfc.threshold = 0.25)
+
+dim(OvarianSet.markers)
+# [1] 13087     7
+# Save
+write.csv(OvarianSet.markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OvarianSet_ALL_2019-10-29.csv")
+# Chunk By Cluster 0-10 
+clus0markers.up <- OvarianSet.markers %>% group_by(cluster) %>% filter(cluster == 0) %>% select(avg_log2FC,gene)
+write.csv(clus0markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OvarianSet_Cluster-0_2019-10-29.csv")
+clus1markers <- OvarianSet.markers %>% group_by(cluster) %>% filter(cluster == 1) %>% select(avg_log2FC,gene)
+write.csv(clus1markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OvarianSet_Cluster-1_2019-10-29.csv")
+clus2markers <- OvarianSet.markers %>% group_by(cluster) %>% filter(cluster == 2) %>% select(avg_log2FC,gene)
+write.csv(clus2markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OvarianSet_Cluster-2_2019-10-29.csv")
+clus3markers <- OvarianSet.markers %>% group_by(cluster) %>% filter(cluster == 3) %>% select(avg_log2FC,gene)
+write.csv(clus3markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OvarianSet_Cluster-3_2019-10-29.csv")
+clus4markers <- OvarianSet.markers %>% group_by(cluster) %>% filter(cluster == 4) %>% select(avg_log2FC,gene)
+write.csv(clus4markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OvarianSet_Cluster-4_2019-10-29.csv")
+clus5markers <- OvarianSet.markers %>% group_by(cluster) %>% filter(cluster == 5) %>% select(avg_log2FC,gene)
+write.csv(clus5markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OvarianSet_Cluster-5_2019-10-29.csv")
+clus6markers <- OvarianSet.markers %>% group_by(cluster) %>% filter(cluster == 6) %>% select(avg_log2FC,gene)
+write.csv(clus6markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OvarianSet_Cluster-6_2019-10-29.csv")
+clus7markers <- OvarianSet.markers %>% group_by(cluster) %>% filter(cluster == 7) %>% select(avg_log2FC,gene)
+write.csv(clus7markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OvarianSet_Cluster-7_2019-10-29.csv")
+clus8markers <- OvarianSet.markers %>% group_by(cluster) %>% filter(cluster == 8) %>% select(avg_log2FC,gene)
+write.csv(clus8markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OvarianSet_Cluster-8_2019-10-29.csv")
+clus9markers <- OvarianSet.markers %>% group_by(cluster) %>% filter(cluster == 9) %>% select(avg_log2FC,gene)
+write.csv(clus9markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OvarianSet_Cluster-9_2019-10-29.csv")
+clus10markers <- OvarianSet.markers %>% group_by(cluster) %>% filter(cluster == 10) %>% select(avg_log2FC,gene)
+write.csv(clus10markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OvarianSet_Cluster-10_2019-10-29.csv")
+```
+### Genes WITH HARMONY 
+
+```{r}
+OvarianSet.F.H <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OvarianSet_F_H_S+R_QC-Subset-Cohort_SeuratObj_HarTest_Res0p6only_20191028.rds")
+OvarianSet.markers.H <- FindAllMarkers(OvarianSet.F.H, min.pct = 0.25, logfc.threshold = 0.25)
+
+dim(OvarianSet.markers.H)
+# [1] 6968     7
+# Save
+write.csv(OvarianSet.markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OvarianSet_Har_ALL_2019-10-29.csv")
+# Chunk By Cluster 0-6
+clus0markers.H <- OvarianSet.markers.H %>% group_by(cluster) %>% filter(cluster == 0) %>% select(avg_log2FC,gene)
+write.csv(clus0markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OvarianSet_Har_Cluster-0_2019-10-29.csv")
+clus1markers.H <- OvarianSet.markers.H %>% group_by(cluster) %>% filter(cluster == 1) %>% select(avg_log2FC,gene)
+write.csv(clus1markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OvarianSet_Har_Cluster-1_2019-10-29.csv")
+clus2markers.H <- OvarianSet.markers.H %>% group_by(cluster) %>% filter(cluster == 2) %>% select(avg_log2FC,gene)
+write.csv(clus2markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OvarianSet_Har_Cluster-2_2019-10-29.csv")
+clus3markers.H <- OvarianSet.markers.H %>% group_by(cluster) %>% filter(cluster == 3) %>% select(avg_log2FC,gene)
+write.csv(clus3markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OvarianSet_Har_Cluster-3_2019-10-29.csv")
+clus4markers.H <- OvarianSet.markers.H %>% group_by(cluster) %>% filter(cluster == 4) %>% select(avg_log2FC,gene)
+write.csv(clus4markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OvarianSet_Har_Cluster-4_2019-10-29.csv")
+clus5markers.H <- OvarianSet.markers.H %>% group_by(cluster) %>% filter(cluster == 5) %>% select(avg_log2FC,gene)
+write.csv(clus5markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OvarianSet_Har_Cluster-5_2019-10-29.csv")
+clus6markers.H <- OvarianSet.markers.H %>% group_by(cluster) %>% filter(cluster == 6) %>% select(avg_log2FC,gene)
+write.csv(clus6markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OvarianSet_Har_Cluster-6_2019-10-29.csv")
+
+
+```
+## OVCAR4 
+### Genes without harmony 
+```{r}
+OVCAR4.F <- readRDS ("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_F_S+R_QC-Subset-Cohort_SeuratObj_HarTest_Res0p6only_20191028.rds")
+
+
+OVCAR4.markers <- FindAllMarkers(OVCAR4.F, min.pct = 0.25, logfc.threshold = 0.25)
+
+saveRDS(OVCAR4.markers, file = "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_ALL_20191028.rds")
+dim(OVCAR4.markers)
+
+# [1] 3486    7
+# Save
+write.csv(OVCAR4.markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_ALL_2019-10-29.csv")
+## clusters: 0 - 6 
+OVCAR4clus0markers <- OVCAR4.markers %>% group_by(cluster) %>% filter(cluster == 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus0markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-0_2019-10-29.csv")
+###Only UP genes 
+OVCAR4clus0markers.UP <-OVCAR4clus0markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus0markers.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-0_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCAR4clus0markers.DOWN <-OVCAR4clus0markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus0markers.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-0_DOWN_2019-10-29.csv")
+
+
+OVCAR4clus1markers <- OVCAR4.markers %>% group_by(cluster) %>% filter(cluster == 1) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus1markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-1_2019-10-29.csv")
+###Only UP genes
+OVCAR4clus1markers.UP <-OVCAR4clus1markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus1markers.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-1_UP_2019-10-29.csv")
+###Only DOWN genes
+OVCAR4clus1markers.DOWN <-OVCAR4clus1markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus1markers.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-1_DOWN_2019-10-29.csv")
+
+
+OVCAR4clus2markers <- OVCAR4.markers %>% group_by(cluster) %>% filter(cluster == 2) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus2markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-2_2019-10-29.csv")
+###Only UP genes
+OVCAR4clus2markers.UP <-OVCAR4clus2markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus2markers.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-2_UP_2019-10-29.csv")
+###Only DOWN genes
+OVCAR4clus2markers.DOWN <-OVCAR4clus2markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus2markers.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-2_DOWN_2019-10-29.csv")
+
+
+OVCAR4clus3markers <- OVCAR4.markers %>% group_by(cluster) %>% filter(cluster == 3) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus3markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-3_2019-10-29.csv")
+###Only UP genes
+OVCAR4clus3markers.UP <-OVCAR4clus3markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus3markers.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-3_UP_2019-10-29.csv")
+###Only DOWN genes
+OVCAR4clus3markers.DOWN <-OVCAR4clus3markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus3markers.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-3_DOWN_2019-10-29.csv")
+
+
+OVCAR4clus4markers <- OVCAR4.markers %>% group_by(cluster) %>% filter(cluster == 4) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus4markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-4_2019-10-29.csv")
+###Only UP genes
+OVCAR4clus4markers.UP <-OVCAR4clus4markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus4markers.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-4_UP_2019-10-29.csv")
+###Only DOWN genes
+OVCAR4clus4markers.DOWN <-OVCAR4clus4markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus4markers.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-4_DOWN_2019-10-29.csv")
+
+
+OVCAR4clus5markers <- OVCAR4.markers %>% group_by(cluster) %>% filter(cluster == 5) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus5markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-5_2019-10-29.csv")
+###Only UP genes
+OVCAR4clus5markers.UP <-OVCAR4clus5markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus5markers.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-5_UP_2019-10-29.csv")
+###Only DOWN genes
+OVCAR4clus5markers.DOWN <-OVCAR4clus5markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus5markers.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-5_DOWN_2019-10-29.csv")
+
+
+OVCAR4clus6markers <- OVCAR4.markers %>% group_by(cluster) %>% filter(cluster == 6) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus6markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-6_2019-10-29.csv")
+###Only UP genes
+OVCAR4clus6markers.UP <-OVCAR4clus6markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus6markers.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-6_UP_2019-10-29.csv")
+###Only DOWN genes
+OVCAR4clus6markers.DOWN <-OVCAR4clus6markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus6markers.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCAR4_Cluster-6_DOWN_2019-10-29.csv")
+
+```
+### Genes WITH harmony 
+```{r}
+OVCAR4.F.H <- readRDS ("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCAR4_F_H_S+R_QC-Subset-Cohort_SeuratObj_HarTest_Res0p6only_20191028.rds")
+
+OVCAR4.markers.H <- FindAllMarkers(OVCAR4.F.H, min.pct = 0.25, logfc.threshold = 0.25)
+
+saveRDS(OVCAR4.markers.H, file = "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_ALL_20191028.rds")
+dim(OVCAR4.markers.H)
+# [1] 2105    7
+# Save
+write.csv(OVCAR4.markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_ALL_2019-10-29.csv")
+## clusters: 0 - 5 
+OVCAR4clus0markers.H <- OVCAR4.markers.H %>% group_by(cluster) %>% filter(cluster == 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus0markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_Cluster-0_2019-10-29.csv")
+###Only UP genes 
+OVCAR4clus0markers.H.UP <-OVCAR4clus0markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus0markers.H.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_Cluster-0_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCAR4clus0markers.H.DOWN <-OVCAR4clus0markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus0markers.H.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_Cluster-0_DOWN_2019-10-29.csv")
+
+
+OVCAR4clus1markers.H <- OVCAR4.markers.H %>% group_by(cluster) %>% filter(cluster == 1) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus1markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_Cluster-1_2019-10-29.csv")
+###Only UP genes 
+OVCAR4clus1markers.H.UP <-OVCAR4clus1markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus1markers.H.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_Cluster-1_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCAR4clus1markers.H.DOWN <-OVCAR4clus1markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus1markers.H.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_Cluster-1_DOWN_2019-10-29.csv")
+
+
+OVCAR4clus2markers.H <- OVCAR4.markers.H %>% group_by(cluster) %>% filter(cluster == 2) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus2markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_Cluster-2_2019-10-29.csv")
+###Only UP genes 
+OVCAR4clus2markers.H.UP <-OVCAR4clus2markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus2markers.H.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_Cluster-2_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCAR4clus2markers.H.DOWN <-OVCAR4clus2markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus2markers.H.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_Cluster-2_DOWN_2019-10-29.csv")
+
+
+OVCAR4clus3markers.H <- OVCAR4.markers.H %>% group_by(cluster) %>% filter(cluster == 3) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus3markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_Cluster-3_2019-10-29.csv")
+###Only UP genes 
+OVCAR4clus3markers.H.UP <-OVCAR4clus3markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus3markers.H.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_Cluster-3_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCAR4clus3markers.H.DOWN <-OVCAR4clus3markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus3markers.H.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_Cluster-3_DOWN_2019-10-29.csv")
+
+
+OVCAR4clus4markers.H <- OVCAR4.markers.H %>% group_by(cluster) %>% filter(cluster == 4) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus4markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_Cluster-4_2019-10-29.csv")
+###Only UP genes 
+OVCAR4clus4markers.H.UP <-OVCAR4clus4markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus4markers.H.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_Cluster-4_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCAR4clus4markers.H.DOWN <-OVCAR4clus4markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus4markers.H.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_Cluster-4_DOWN_2019-10-29.csv")
+
+
+OVCAR4clus5markers.H <- OVCAR4.markers.H %>% group_by(cluster) %>% filter(cluster == 5) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus5markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_Cluster-5_2019-10-29.csv")
+###Only UP genes 
+OVCAR4clus5markers.H.UP <-OVCAR4clus5markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus5markers.H.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_Cluster-5_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCAR4clus5markers.H.DOWN <-OVCAR4clus5markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCAR4clus5markers.H.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCAR4_Har_Cluster-5_DOWN_2019-10-29.csv")
+
+```
+## OVCA3
+### Genes without harmony 
+```{r}
+OVCA3.F <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_F_S+R_QC-Subset-Cohort_SeuratObj_HarTest_Res0p6only_20191028.rds")
+
+OVCA3.markers <- FindAllMarkers(OVCA3.F, min.pct = 0.25, logfc.threshold = 0.25)
+
+saveRDS(OVCA3.markers, file = "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCA3_ALL_20191028.rds" )
+dim(OVCA3.markers)
+# [1] 1243    7
+# Save
+write.csv(OVCA3.markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCA3_ALL_2019-10-29.csv")
+## clusters: 0 - 4 
+OVCA3clus0markers <- OVCA3.markers %>% group_by(cluster) %>% filter(cluster == 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus0markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCA3_Cluster-0_2019-10-29.csv")
+###Only UP genes 
+OVCA3clus0markers.UP <-OVCA3clus0markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus0markers.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCA3_Cluster-0_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCA3clus0markers.DOWN <-OVCA3clus0markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus0markers.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCA3_Cluster-0_DOWN_2019-10-29.csv")
+
+
+OVCA3clus1markers <- OVCA3.markers %>% group_by(cluster) %>% filter(cluster == 1) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus1markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCA3_Cluster-1_2019-10-29.csv")
+###Only UP genes 
+OVCA3clus1markers.UP <-OVCA3clus1markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus1markers.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCA3_Cluster-1_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCA3clus1markers.DOWN <-OVCA3clus1markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus1markers.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCA3_Cluster-1_DOWN_2019-10-29.csv")
+
+
+OVCA3clus2markers <- OVCA3.markers %>% group_by(cluster) %>% filter(cluster == 2) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus2markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCA3_Cluster-2_2019-10-29.csv")
+###Only UP genes 
+OVCA3clus2markers.UP <-OVCA3clus2markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus2markers.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCA3_Cluster-2_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCA3clus2markers.DOWN <-OVCA3clus2markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus2markers.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCA3_Cluster-2_DOWN_2019-10-29.csv")
+
+
+OVCA3clus3markers <- OVCA3.markers %>% group_by(cluster) %>% filter(cluster == 3) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus3markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCA3_Cluster-3_2019-10-29.csv")
+###Only UP genes 
+OVCA3clus3markers.UP <-OVCA3clus3markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus3markers.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCA3_Cluster-3_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCA3clus3markers.DOWN <-OVCA3clus3markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus3markers.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCA3_Cluster-3_DOWN_2019-10-29.csv")
+
+
+OVCA3clus4markers <- OVCA3.markers %>% group_by(cluster) %>% filter(cluster == 4) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus4markers, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCA3_Cluster-4_2019-10-29.csv")
+###Only UP genes 
+OVCA3clus4markers.UP <-OVCA3clus4markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus4markers.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCA3_Cluster-4_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCA3clus4markers.DOWN <-OVCA3clus4markers %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus4markers.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/DiffExpGeneList_OVCA3_Cluster-4_DOWN_2019-10-29.csv")
+
+```
+### Genes WITH harmony 
+```{r}
+OVCA3.F.H <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/OVCA3_F_H_S+R_QC-Subset-Cohort_SeuratObj_HarTest_Res0p6only_20191028.rds")
+
+OVCA3.markers.H <- FindAllMarkers(OVCA3.F.H, min.pct = 0.25, logfc.threshold = 0.25)
+
+saveRDS(OVCA3.markers.H, file = "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_ALL_20191028.rds" )
+dim(OVCA3.markers.H)
+# [1] 3158    7
+# Save
+write.csv(OVCA3.markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_ALL_2019-10-29.csv")
+## clusters: 0 - 11 
+OVCA3clus0markers.H <- OVCA3.markers.H %>% group_by(cluster) %>% filter(cluster == 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus0markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-0_2019-10-29.csv")
+###Only UP genes 
+OVCA3clus0markers.H.UP <-OVCA3clus0markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus0markers.H.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-0_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCA3clus0markers.H.DOWN <-OVCA3clus0markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus0markers.H.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-0_DOWN_2019-10-29.csv")
+
+
+OVCA3clus1markers.H <- OVCA3.markers.H %>% group_by(cluster) %>% filter(cluster == 1) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus1markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-1_2019-10-29.csv")
+###Only UP genes 
+OVCA3clus1markers.H.UP <-OVCA3clus1markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus1markers.H.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-1_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCA3clus1markers.H.DOWN <-OVCA3clus1markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus1markers.H.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-1_DOWN_2019-10-29.csv")
+
+
+OVCA3clus2markers.H <- OVCA3.markers.H %>% group_by(cluster) %>% filter(cluster == 2) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus2markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-2_2019-10-29.csv")
+###Only UP genes 
+OVCA3clus2markers.H.UP <-OVCA3clus2markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus2markers.H.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-2_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCA3clus2markers.H.DOWN <-OVCA3clus2markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus2markers.H.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-2_DOWN_2019-10-29.csv")
+
+
+OVCA3clus3markers.H <- OVCA3.markers.H %>% group_by(cluster) %>% filter(cluster == 3) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus3markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-3_2019-10-29.csv")
+###Only UP genes 
+OVCA3clus3markers.H.UP <-OVCA3clus3markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus3markers.H.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-3_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCA3clus3markers.H.DOWN <-OVCA3clus3markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus3markers.H.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-3_DOWN_2019-10-29.csv")
+
+
+OVCA3clus4markers.H <- OVCA3.markers.H %>% group_by(cluster) %>% filter(cluster == 4) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus4markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-4_2019-10-29.csv")
+###Only UP genes 
+OVCA3clus4markers.H.UP <-OVCA3clus4markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus4markers.H.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-4_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCA3clus4markers.H.DOWN <-OVCA3clus4markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus4markers.H.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-4_DOWN_2019-10-29.csv")
+
+
+OVCA3clus5markers.H <- OVCA3.markers.H %>% group_by(cluster) %>% filter(cluster == 5) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus5markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-5_2019-10-29.csv")
+###Only UP genes 
+OVCA3clus5markers.H.UP <-OVCA3clus5markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus5markers.H.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-5_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCA3clus5markers.H.DOWN <-OVCA3clus5markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus5markers.H.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-5_DOWN_2019-10-29.csv")
+
+
+OVCA3clus6markers.H <- OVCA3.markers.H %>% group_by(cluster) %>% filter(cluster == 6) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus6markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-6_2019-10-29.csv")
+###Only UP genes 
+OVCA3clus6markers.H.UP <-OVCA3clus6markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus6markers.H.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-6_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCA3clus6markers.H.DOWN <-OVCA3clus6markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus6markers.H.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-6_DOWN_2019-10-29.csv")
+
+
+OVCA3clus7markers.H <- OVCA3.markers.H %>% group_by(cluster) %>% filter(cluster == 7) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus7markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-7_2019-10-29.csv")
+###Only UP genes 
+OVCA3clus7markers.H.UP <-OVCA3clus7markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus7markers.H.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-7_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCA3clus7markers.H.DOWN <-OVCA3clus7markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus7markers.H.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-7_DOWN_2019-10-29.csv")
+
+
+OVCA3clus8markers.H <- OVCA3.markers.H %>% group_by(cluster) %>% filter(cluster == 8) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus8markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-8_2019-10-29.csv")
+###Only UP genes 
+OVCA3clus8markers.H.UP <-OVCA3clus8markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus8markers.H.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-8_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCA3clus8markers.H.DOWN <-OVCA3clus8markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus8markers.H.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-8_DOWN_2019-10-29.csv")
+
+
+OVCA3clus9markers.H <- OVCA3.markers.H %>% group_by(cluster) %>% filter(cluster == 9) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus9markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-9_2019-10-29.csv")
+###Only UP genes 
+OVCA3clus9markers.H.UP <-OVCA3clus9markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus9markers.H.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-9_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCA3clus9markers.H.DOWN <-OVCA3clus9markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus9markers.H.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-9_DOWN_2019-10-29.csv")
+
+
+OVCA3clus10markers.H <- OVCA3.markers.H %>% group_by(cluster) %>% filter(cluster == 10) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus10markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-10_2019-10-29.csv")
+###Only UP genes 
+OVCA3clus10markers.H.UP <-OVCA3clus10markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus10markers.H.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-10_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCA3clus10markers.H.DOWN <-OVCA3clus10markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus10markers.H.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-10_DOWN_2019-10-29.csv")
+
+
+OVCA3clus11markers.H <- OVCA3.markers.H %>% group_by(cluster) %>% filter(cluster == 11) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus11markers.H, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-11_2019-10-29.csv")
+###Only UP genes 
+OVCA3clus11markers.H.UP <-OVCA3clus11markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC > 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus11markers.H.UP, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-11_UP_2019-10-29.csv")
+###Only DOWN genes 
+OVCA3clus11markers.H.DOWN <-OVCA3clus11markers.H %>% group_by(avg_log2FC) %>% filter(avg_log2FC < 0) %>% select(avg_log2FC,gene)
+write.csv(OVCA3clus11markers.H.DOWN, "C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Gene List/Harmony/DiffExpGeneList_OVCA3_Har_Cluster-11_DOWN_2019-10-29.csv")
+
+```
+# Volcano plot comparing OVCAR4 and OVCA3
+
+```{r}
+ggplot(data=OVCAR4.markers, aes(x=avg_log2FC, y=-log10(p_val), label=gene)) + geom_point() + geom_text()
+```
+
+
+
+
+
