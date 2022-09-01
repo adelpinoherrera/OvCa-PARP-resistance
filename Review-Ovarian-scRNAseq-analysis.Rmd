@@ -2,6 +2,8 @@
 title: "Review_Ovarian-scRNAseq-analysis"
 output: pdf_document 
 ---
+This code was developed as the initial steps when analyzing scRNA-seq data 
+Looking at all the steps will be beneficial to understand the workflow for scRNA-seq data analysis 
 Reviewing the code provided by Dr.Ferrall-Fairbanks
 
 # Initial steps, importing libraries
