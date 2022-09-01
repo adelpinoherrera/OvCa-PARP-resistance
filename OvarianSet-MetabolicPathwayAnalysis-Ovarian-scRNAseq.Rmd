@@ -2,6 +2,12 @@
 title: "OvarianSet-MetabolicPathwayAnalysis-Ovarian-scRNAseq"
 output: pdf_document
 ---
+This code has several section, each section starts with a line of #s and ends with three #s (###) followed by starts (*)
+The sections that were used to make the figures for the paper were (NOTE: the title for the section is right above the # line):
+-Approach 1 with and without harmony
+-Specific pathway analysis 
+
+
 
 OvarianSet with both approach 1 and 2 
 
@@ -9,6 +15,7 @@ OvarianSet with both approach 1 and 2
 ##Import data
 
 ```{r}
+#################################################################################################################################################
 #changes
 library(future)
 library(ggplot2)
@@ -941,6 +948,8 @@ pdf(paste(metadir.H,"UMAP_Valine-Leucine-Isoleucine-Biosynthesis-Score",date,".p
 dPlot <- FeaturePlot(OvarianSetGrpd.H.1, features='valineLeucineIsoleucBios1') 
 print(dPlot)
 dev.off()
+
+###************************************************************************************************************************************
 ```
 
 
@@ -953,6 +962,7 @@ dev.off()
 #Approach 2 
 ## Import data 
 ```{r}
+######################################################################################################################################################
 library(future)
 library(ggplot2)
 library(bigmemory)
@@ -1880,12 +1890,15 @@ pdf(paste(metadir2.H,"UMAP_Valine-Leucine-Isoleucine-Biosynthesis-Score",date,".
 dPlot <- FeaturePlot(OvarianSetGrpd.H.2, features='valineLeucineIsoleucBios1') 
 print(dPlot)
 dev.off()
+
+###**********************************************************************************************************************************************************
 ```
 
 #New way to get the cvs files 
 ##Approach 1
 ###Import files with and without harmony 
 ```{r}
+#######################################################################################################################################################
 library(future)
 library(ggplot2)
 library(bigmemory)
@@ -2930,6 +2943,8 @@ OVCA3.H.2_S_clusters <- OVCA3.H.2_S@meta.data[["seurat_clusters"]] #save the clu
 OVCA3.H.2_S_ALL <- cbind(data_scores_OVCA3.H.2_S,OVCA3.H.2_S_clusters) #save the whole three columns together
 fwrite(x = OVCA3.H.2_S_ALL, file = paste(metadir2.H,"OVCA3.H_S","_average-scoresALL",date,".csv",sep=""), row.names=TRUE, col.names=TRUE) #save the file 
 saveRDS(OVCA3.H.2_S_ALL, paste(metadir2.H,"OVCA3.H_S","SeuratObj-with-Metabolic-Pathway-Scores",date,".rds",sep=""))
+
+###********************************************************************************************************************************************************
 ```
 #Violin plots 
 pdf("./OVCAR4_S+R_ViolinPlot_nFeatures_2019-10-28.pdf")
@@ -2939,6 +2954,7 @@ dev.off()
 
 ##Import files
 ```{r}
+####################################################################################################################################################
 library(future)
 library(ggplot2)
 library(bigmemory)
@@ -3356,6 +3372,7 @@ dPlot <- VlnPlot(OvarianSetGrpd.H.1.Orig, features='valineLeucineIsoleucBios1')
 print(dPlot)
 dev.off()
 
+###***************************************************************************************************************************************************
 ```
 
 
@@ -3367,6 +3384,7 @@ OvarianSetGrpd.1.Resistance@active.ident
 
 #UMAPs for paper 
 ```{r}
+################################################################################################################################################
 OvarianSet.1 <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Metabolic Pathway Analysis/Ovarian Set/Approach 1/OvarianSet_Approach1_Seurat-Metabolic-Analysis_SeuratObj-with-Metabolic-Pathway-Scores1_2022-05-19.rds")
 
 metadir1 <- 'C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Metabolic Pathway Analysis/Ovarian Set/Approach 1/OvarianSet_Approach1_Seurat-Metabolic-Analysis_'
@@ -3392,6 +3410,7 @@ dPlot <- FeaturePlot(OvarianSet.1, features='pyrimidineMet1') + xlim(-14, 14) + 
 print(dPlot)
 dev.off()
 
+###****************************************************************************************************************************************************
 ```
 
 
@@ -3399,6 +3418,7 @@ dev.off()
 #Purine metabolism 
 ##Import file
 ```{r}
+################################################################################################################################################
 library(future)
 library(ggplot2)
 library(bigmemory)
@@ -3699,11 +3719,14 @@ MTOR_gene_scores=FetchData(object=OvarianCellLineGrpd.1, vars=c("MTOR")) #get th
 #OvarianSetGrpd.1_clusters <- OvarianSetGrpd.1@meta.data[["seurat_clusters"]] #save the clusters for the entire dataset 
 MTOR_OvarianSetGrpd.1 <- cbind(MTOR_gene_scores,OvarianSetGrpd.1_clusters) #create a matrix containing: cell type, gene score, and cluster
 fwrite(x= MTOR_OvarianSetGrpd.1, file=paste(metadir1,"_MTOR-scores",date,".csv",sep=""), row.names=TRUE, col.names=TRUE) #save the file
+
+###**********************************************************************************************************************************************************
 ```
 
 #Specific pathway analysis 
 ##Import files
 ```{r}
+################################################################################################################################################
 library(future)
 library(ggplot2)
 library(bigmemory)
@@ -3721,7 +3744,7 @@ options(future.globals.maxSize=134217728000) ### for 128GB * 1024*1024
 date = "_2022-07-07"
 #figdirOrg = "./Resolution-of-1/OvarianSet_All-Samples_"
 
-metadir1 <- 'C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Metabolic Pathway Analysis/Ovarian Set/Specific pathways analysis/OvarianSet_Approach1_Seurat-Specific-Analysis_'
+metadir1 <- 'C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Metabolic Pathway Analysis/Ovarian Set/Specific pathways analysis/OvarianSet_Seurat-Specific-Analysis_Right_Color_'
 
 OvarianSet.1 <- readRDS("C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Metabolic Pathway Analysis/Ovarian Set/Purine Metabolism/OvarianSet_Approach1_Seurat-Purine-Analysis_SeuratObj-with-Metabolic-Pathway-Scores-Purine-Metabolism_2022-06-13.rds")
 
@@ -3863,8 +3886,29 @@ averageScores.1(OVCA3.1_R,"OVCA3_R")
 ##Do UMAPs
 ```{r}
 #Ovarian Set 
+##Right color for purine metabolism
+pdf(paste(metadir1,"UMAP_Purine-Score",date,".pdf",sep=""))
+dPlot <- FeaturePlot(OvarianSetGrpd.1, features='purineMet1', cols = c("gray95", "#AD07E3")) + xlim(-14, 14) + ylim(-6, 6)
+print(dPlot)
+dev.off()
+#SAVE as PNG
+png(paste(metadir1,"UMAP_Purine-Score",date,".png",sep=""))
+dPlot <- FeaturePlot(OvarianSetGrpd.1, features='purineMet1', cols = c("gray95", "#AD07E3")) + xlim(-14, 14) + ylim(-6, 6)
+print(dPlot)
+dev.off()
+
 pdf(paste(metadir1,"UMAP_Purine_DeNovo-Score",date,".pdf",sep=""))
 dPlot <- FeaturePlot(OvarianSetGrpd.1, features='PuDeNovo1') + xlim(-14, 14) + ylim(-6, 6)
+print(dPlot)
+dev.off()
+#Right color for the DeNovo Purine metabolism 
+pdf(paste(metadir1,"UMAP_Purine_DeNovo-Score",date,".pdf",sep=""))
+dPlot <- FeaturePlot(OvarianSetGrpd.1, features='PuDeNovo1', cols = c("gray95", "#DE8AF9")) + xlim(-14, 14) + ylim(-6, 6)
+print(dPlot)
+dev.off()
+##SAVE as PNG
+png(paste(metadir1,"UMAP_Purine_DeNovo-Score",date,".png",sep=""))
+dPlot <- FeaturePlot(OvarianSetGrpd.1, features='PuDeNovo1', cols = c("gray95", "#DE8AF9")) + xlim(-14, 14) + ylim(-6, 6)
 print(dPlot)
 dev.off()
 
@@ -3872,9 +3916,40 @@ pdf(paste(metadir1,"UMAP_Purine_Salvage-Score",date,".pdf",sep=""))
 dPlot <- FeaturePlot(OvarianSetGrpd.1, features='PuSalvage1') + xlim(-14, 14) + ylim(-6, 6)
 print(dPlot)
 dev.off()
+#right color for the salvage Purine metabolism
+pdf(paste(metadir1,"UMAP_Purine_Salvage-Score",date,".pdf",sep=""))
+dPlot <- FeaturePlot(OvarianSetGrpd.1, features='PuSalvage1', cols = c("gray95", "#760699")) + xlim(-14, 14) + ylim(-6, 6)
+print(dPlot)
+dev.off()
+#SAVE as PNG
+png(paste(metadir1,"UMAP_Purine_Salvage-Score",date,".png",sep=""))
+dPlot <- FeaturePlot(OvarianSetGrpd.1, features='PuSalvage1', cols = c("gray95", "#760699")) + xlim(-14, 14) + ylim(-6, 6)
+print(dPlot)
+dev.off()
+
+##Right color for the pyrimidine metabolism
+pdf(paste(metadir1,"UMAP_Pyrimidine-Score_green",date,".pdf",sep=""))
+dPlot <- FeaturePlot(OvarianSetGrpd.1, features='pyrimidineMet1', cols = c("gray95", "#00C000")) + xlim(-14, 14) + ylim(-6, 6)
+print(dPlot)
+dev.off()
+#SAVE as PNG
+png(paste(metadir1,"UMAP_Pyrimidine-Score",date,".png",sep=""))
+dPlot <- FeaturePlot(OvarianSetGrpd.1, features='pyrimidineMet1', cols = c("gray95", "#00C000")) + xlim(-14, 14) + ylim(-6, 6)
+print(dPlot)
+dev.off()
 
 pdf(paste(metadir1,"UMAP_Pyrimidine_DeNovo-Score",date,".pdf",sep=""))
 dPlot <- FeaturePlot(OvarianSetGrpd.1, features='PyDeNovo1') + xlim(-14, 14) + ylim(-6, 6)
+print(dPlot)
+dev.off()
+#Right color for the DeNovo pyrimidine metabolism
+pdf(paste(metadir1,"UMAP_Pyrimidine_DeNovo-Score",date,".pdf",sep=""))
+dPlot <- FeaturePlot(OvarianSetGrpd.1, features='PyDeNovo1', cols = c("gray95", "#13C984")) + xlim(-14, 14) + ylim(-6, 6)
+print(dPlot)
+dev.off()
+#SAVE as PNG
+png(paste(metadir1,"UMAP_Pyrimidine_DeNovo-Score",date,".png",sep=""))
+dPlot <- FeaturePlot(OvarianSetGrpd.1, features='PyDeNovo1', cols = c("gray95", "#13C984")) + xlim(-14, 14) + ylim(-6, 6)
 print(dPlot)
 dev.off()
 
@@ -3882,9 +3957,29 @@ pdf(paste(metadir1,"UMAP_Pyrimidine_Salvage-Score",date,".pdf",sep=""))
 dPlot <- FeaturePlot(OvarianSetGrpd.1, features='PySalvage1') + xlim(-14, 14) + ylim(-6, 6)
 print(dPlot)
 dev.off()
+#Right color for the salvage Pyrimidine metabolism
+pdf(paste(metadir1,"UMAP_Pyrimidine_Salvage-Score",date,".pdf",sep=""))
+dPlot <- FeaturePlot(OvarianSetGrpd.1, features='PySalvage1', cols = c("gray95", "#038352")) + xlim(-14, 14) + ylim(-6, 6)
+print(dPlot)
+dev.off()
+#SAVE as PNG
+png(paste(metadir1,"UMAP_Pyrimidine_Salvage-Score",date,".png",sep=""))
+dPlot <- FeaturePlot(OvarianSetGrpd.1, features='PySalvage1', cols = c("gray95", "#038352")) + xlim(-14, 14) + ylim(-6, 6)
+print(dPlot)
+dev.off()
 
 pdf(paste(metadir1,"UMAP_Glutamine-Score",date,".pdf",sep=""))
 dPlot <- FeaturePlot(OvarianSetGrpd.1, features='Glutamine1') + xlim(-14, 14) + ylim(-6, 6)
+print(dPlot)
+dev.off()
+#Right color for the glutamine metabolism 
+pdf(paste(metadir1,"UMAP_Glutamine-Score",date,".pdf",sep=""))
+dPlot <- FeaturePlot(OvarianSetGrpd.1, features='Glutamine1', cols = c("gray95", "#F71480")) + xlim(-14, 14) + ylim(-6, 6)
+print(dPlot)
+dev.off()
+#SAVE as PNG
+png(paste(metadir1,"UMAP_Glutamine-Score",date,".png",sep=""))
+dPlot <- FeaturePlot(OvarianSetGrpd.1, features='Glutamine1', cols = c("gray95", "#F71480")) + xlim(-14, 14) + ylim(-6, 6)
 print(dPlot)
 dev.off()
 
@@ -3895,6 +3990,28 @@ dev.off()
 
 pdf(paste(metadir1,"UMAP_Glycine-Score",date,".pdf",sep=""))
 dPlot <- FeaturePlot(OvarianSetGrpd.1, features='Glycine1') + xlim(-14, 14) + ylim(-6, 6)
+print(dPlot)
+dev.off()
+
+#Right color for glycolysis 
+pdf(paste(metadir1,"UMAP_Glycolysis-Score",date,".pdf",sep=""))
+dPlot <- FeaturePlot(OvarianSetGrpd.1, features='glycolysis1', cols = c("gray95", "#D0C217")) + xlim(-14, 14) + ylim(-6, 6)
+print(dPlot)
+dev.off()
+#SAVE as PNG
+png(paste(metadir1,"UMAP_Glycolysis-Score",date,".png",sep=""))
+dPlot <- FeaturePlot(OvarianSetGrpd.1, features='glycolysis1', cols = c("gray95", "#D0C217")) + xlim(-14, 14) + ylim(-6, 6)
+print(dPlot)
+dev.off()
+
+#Right color for OXPHOS
+pdf(paste(metadir1,"UMAP_OXPHOS-Score_red",date,".pdf",sep=""))
+dPlot <- FeaturePlot(OvarianSetGrpd.1, features='OXPHOS1', cols = c("gray95", "#C80001")) + xlim(-14, 14) + ylim(-6, 6)
+print(dPlot)
+dev.off()
+#SAVE as PNG
+png(paste(metadir1,"UMAP_OXPHOS-Score_red",date,".png",sep=""))
+dPlot <- FeaturePlot(OvarianSetGrpd.1, features='OXPHOS1', cols = c("gray95", "#C80001")) + xlim(-14, 14) + ylim(-6, 6)
 print(dPlot)
 dev.off()
 ```
@@ -4251,12 +4368,14 @@ feature1 <- FeaturePlot(OvarianSetGrpd.1, features=c('PSAT1','PHGDH','SERINC1','
 print(feature1)
 dev.off()
 
+###**************************************************************************************************************************************************
 ```
 
 #Separate cell lines
 
 ### Import data 
 ```{r}
+###############################################################################################################################################
 library(future)
 library(ggplot2)
 library(bigmemory)
@@ -4271,7 +4390,7 @@ plan("multiprocess", workers=16)
 
 options(future.globals.maxSize=134217728000) ### for 128GB * 1024*1024
 
-date = "_2022-07-19"
+date = "_2022-08-31"
 #figdirOrg = "./Resolution-of-1/OvarianSet_All-Samples_"
 
 metadir4 <- 'C:/Users/adelpinoherrera/Dropbox (UFL)/research-share/Adriana/scRNAseq/data/Metabolic Pathway Analysis/Separate cell lines from Ovarian Set/OVCAR4_Approach1_Seurat-Specific-Analysis_'
@@ -4497,6 +4616,8 @@ pdf(paste(metadir3,"UMAP_Clusters",date,".pdf",sep=""), width=12, height=8)
 d3Plot <- DimPlot(OVCA3pair.1, reduction="umap", group.by='old.ident') + xlim(-14, 14) + ylim(-6, 6)
 print(d3Plot)
 dev.off()
+
+###********************************************************************************************************************************************************
 ```
 
 
